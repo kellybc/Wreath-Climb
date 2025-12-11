@@ -20,6 +20,10 @@ const Game: React.FC = () => {
     score: 0,
   });
   
+  // Logic Refs (Mutable state for game loop)
+  const floorRef = useRef(0);
+  const statusRef = useRef<GameState['status']>('START');
+
   // Game Objects Refs
   const playerRef = useRef<Player>({
     pos: { x: CANVAS_WIDTH / 2, y: -50 },
@@ -109,7 +113,7 @@ const Game: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       keys.current[e.code] = true;
-      if ((e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') && gameState.status === 'START') {
+      if ((e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') && statusRef.current === 'START') {
         startGame();
       }
     };
@@ -123,7 +127,7 @@ const Game: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [gameState.status]);
+  }, []); // Empty dependency array as we use ref for status
 
   const initLevel = () => {
     platformsRef.current = [];
@@ -165,6 +169,15 @@ const Game: React.FC = () => {
     }
   };
 
+  const updateGameState = (newStatus: GameState['status'], additionalState: Partial<GameState> = {}) => {
+      statusRef.current = newStatus;
+      setGameState(prev => ({
+          ...prev,
+          status: newStatus,
+          ...additionalState
+      }));
+  };
+
   const startGame = () => {
     initLevel();
     playerRef.current = {
@@ -181,13 +194,10 @@ const Game: React.FC = () => {
     };
     cameraY.current = 0;
     shakeRef.current = 0;
+    floorRef.current = 0;
     startTimeRef.current = Date.now();
-    setGameState({
-      status: 'PLAYING',
-      floor: 0,
-      timeElapsed: 0,
-      score: 0,
-    });
+    
+    updateGameState('PLAYING', { floor: 0, timeElapsed: 0, score: 0 });
   };
 
   const updatePhysics = () => {
@@ -273,7 +283,8 @@ const Game: React.FC = () => {
          player.isGrounded = true;
          player.isJumping = false;
          
-         if (plat.floor > gameState.floor) {
+         if (plat.floor > floorRef.current) {
+             floorRef.current = plat.floor;
              setGameState(prev => ({ ...prev, floor: plat.floor }));
          }
        }
@@ -283,13 +294,13 @@ const Game: React.FC = () => {
     // We shift the world DOWN (positive translate) as player goes UP (negative Y)
     const targetCamY = (CANVAS_HEIGHT * 0.6) - player.pos.y;
     
-    const minCamY = CANVAS_HEIGHT - 50; // Show a bit of ground buffer
+    // Only scroll up (don't scroll down if player falls too much, maybe? - nah, standard camera)
     // Lerp
     cameraY.current += (targetCamY - cameraY.current) * 0.1;
     
     // Obstacle Spawning
-    // Increased base spawn chance slightly
-    if (Math.random() < 0.03 + (gameState.floor * 0.003)) {
+    // Use floorRef for current difficulty
+    if (Math.random() < 0.03 + (floorRef.current * 0.003)) {
        const type = ['book', 'beaker', 'ornament'][Math.floor(Math.random() * 3)] as Obstacle['type'];
        // Spawn above the visible screen area
        // Visible top in WorldY is roughly: -cameraY.current
@@ -315,7 +326,7 @@ const Game: React.FC = () => {
          y: spawnY,
          width: 30,
          height: 30,
-         speed: 5 + Math.random() * 4 + (gameState.floor * 0.2), // Slightly faster
+         speed: 5 + Math.random() * 4 + (floorRef.current * 0.2), // Slightly faster
          rotation: 0,
          type
        });
@@ -362,14 +373,14 @@ const Game: React.FC = () => {
         }
     }
     
-    if (player.lives <= 0 && gameState.status === 'PLAYING') {
-        setGameState(prev => ({ ...prev, status: 'GAMEOVER' }));
+    if (player.lives <= 0 && statusRef.current === 'PLAYING') {
+        updateGameState('GAMEOVER');
     }
     
     // Victory (Top of tower is at y = -TOWER_HEIGHT)
-    if (player.pos.y <= -(TOWER_HEIGHT - 100) && gameState.status === 'PLAYING') {
+    if (player.pos.y <= -(TOWER_HEIGHT - 100) && statusRef.current === 'PLAYING') {
          playSound('win');
-         setGameState(prev => ({ ...prev, status: 'VICTORY', timeElapsed: (Date.now() - startTimeRef.current) / 1000 }));
+         updateGameState('VICTORY', { timeElapsed: (Date.now() - startTimeRef.current) / 1000 });
     }
     
     for (let i = particlesRef.current.length - 1; i >= 0; i--) {
@@ -659,12 +670,13 @@ const Game: React.FC = () => {
   };
 
   const loop = useCallback(() => {
-    if (gameState.status === 'PLAYING') {
+    // Check ref for logic updates to prevent stale closures
+    if (statusRef.current === 'PLAYING') {
       updatePhysics();
     }
     draw();
     requestRef.current = requestAnimationFrame(loop);
-  }, [gameState.status]);
+  }, []); // Empty dependency ensures loop is not recreated
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(loop);
